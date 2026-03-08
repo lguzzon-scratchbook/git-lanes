@@ -373,6 +373,7 @@ OTHER:
 FLAGS:
   --session, -s <name>      Specify session explicitly
   --forge, -f <type>        PR forge: github, gitlab, bitbucket (default: github)
+  --adapter, -a <name>      Hook adapter: claude-code, cursor, aider, opencode, droid, auggie
 `.trim());
 }
 

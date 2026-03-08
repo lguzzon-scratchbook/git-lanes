@@ -1,5 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from "fs";
-import { join } from "path";
+import { homedir } from "os";
+import { createHash } from "crypto";
+import { dirname, isAbsolute, join } from "path";
+import { spawnSync } from "bun";
 import { getRepoRoot } from "../git.ts";
 import * as log from "../utils/logger.ts";
 
@@ -11,10 +14,13 @@ interface AdapterConfig {
   mergeConfig?: (existing: Record<string, unknown>, source: Record<string, unknown>) => Record<string, unknown>;
 }
 
-const ADAPTERS: Record<string, () => AdapterConfig> = {
+const ADAPTERS: Record<string, (repoRoot: string) => AdapterConfig> = {
   "claude-code": getClaudeCodeConfig,
   "cursor": getCursorConfig,
   "aider": getAiderConfig,
+  "opencode": getOpenCodeConfig,
+  "droid": getDroidConfig,
+  "auggie": getAuggieConfig,
 };
 
 /**
@@ -28,10 +34,10 @@ export function installHooks(adapter = "claude-code", cwd?: string): void {
     throw new Error(`Unknown adapter: ${adapter}. Available: ${Object.keys(ADAPTERS).join(", ")}`);
   }
 
-  const config = configFn();
+  const config = configFn(repoRoot);
 
   // Create hooks directory
-  const hooksPath = join(repoRoot, config.hooksDir);
+  const hooksPath = resolveAdapterPath(repoRoot, config.hooksDir);
   mkdirSync(hooksPath, { recursive: true });
 
   // Write hook files
@@ -43,8 +49,8 @@ export function installHooks(adapter = "claude-code", cwd?: string): void {
 
   // Write config file if specified
   if (config.configFile && config.configContent) {
-    const configPath = join(repoRoot, config.configFile);
-    mkdirSync(join(configPath, ".."), { recursive: true });
+    const configPath = resolveAdapterPath(repoRoot, config.configFile);
+    mkdirSync(dirname(configPath), { recursive: true });
 
     // Merge with existing config if present
     if (existsSync(configPath)) {
@@ -85,8 +91,8 @@ export function uninstallHooks(adapter = "claude-code", cwd?: string): void {
     throw new Error(`Unknown adapter: ${adapter}`);
   }
 
-  const config = configFn();
-  const hooksPath = join(repoRoot, config.hooksDir);
+  const config = configFn(repoRoot);
+  const hooksPath = resolveAdapterPath(repoRoot, config.hooksDir);
 
   // Remove hook files
   for (const filename of Object.keys(config.files)) {
@@ -163,7 +169,7 @@ exit 0
 `,
     },
     configFile: ".claude/settings.json",
-    mergeConfig: mergeClaudeCodeConfig,
+    mergeConfig: mergeManagedHookConfig,
     configContent: JSON.stringify({
       hooks: {
         PreToolUse: [createClaudeCommandHookEntry(".claude/hooks/git-lanes-pre-tool")],
@@ -209,6 +215,136 @@ fi
 exit 0
 `,
     },
+  };
+}
+
+function getOpenCodeConfig(): AdapterConfig {
+  return {
+    hooksDir: ".opencode/plugins",
+    files: {
+      "git-lanes.js": `import { spawnSync } from "bun";
+
+const FILE_TOOLS = new Set(["edit", "write", "patch", "multiedit"]);
+const decoder = new TextDecoder();
+
+function outputText(value) {
+  return value ? decoder.decode(value).trim() : "";
+}
+
+function run(args, cwd) {
+  return spawnSync(args, { cwd, stdio: ["ignore", "pipe", "ignore"] });
+}
+
+function hasSession(cwd) {
+  return run(["git", "lanes", "which"], cwd).exitCode === 0;
+}
+
+function maybeCommit(cwd) {
+  const status = run(["git", "status", "--porcelain"], cwd);
+  if (status.exitCode !== 0 || outputText(status.stdout) === "") {
+    return;
+  }
+
+  spawnSync(["git", "add", "-A"], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+  spawnSync(["git", "commit", "-m", "WIP: auto-checkpoint on session stop"], {
+    cwd,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+}
+
+function extractPaths(output) {
+  const paths = [];
+
+  if (typeof output?.args?.filePath === "string") {
+    paths.push(output.args.filePath);
+  }
+
+  if (typeof output?.args?.path === "string") {
+    paths.push(output.args.path);
+  }
+
+  return [...new Set(paths.filter((value) => typeof value === "string" && value.length > 0))];
+}
+
+export const GitLanesPlugin = async ({ directory, worktree }) => {
+  const cwd = typeof worktree === "string" && worktree.length > 0 ? worktree : directory;
+
+  return {
+    "tool.execute.after": async (input, output) => {
+      if (!FILE_TOOLS.has(input.tool) || !hasSession(cwd)) {
+        return;
+      }
+
+      for (const filePath of extractPaths(output)) {
+        spawnSync(["git", "lanes", "track", filePath], {
+          cwd,
+          stdio: ["ignore", "ignore", "ignore"],
+        });
+      }
+    },
+
+    event: async ({ event }) => {
+      if (event.type !== "session.idle" || !hasSession(cwd)) {
+        return;
+      }
+
+      maybeCommit(cwd);
+    },
+  };
+};
+`,
+    },
+  };
+}
+
+function getDroidConfig(): AdapterConfig {
+  return {
+    hooksDir: ".factory/hooks",
+    files: {
+      "git-lanes-pre-tool.sh": getDroidPreToolScript(),
+      "git-lanes-post-tool.sh": getDroidPostToolScript(),
+      "git-lanes-stop.sh": getDroidStopScript(),
+    },
+    configFile: ".factory/settings.json",
+    mergeConfig: mergeManagedHookConfig,
+    configContent: JSON.stringify({
+      hooks: {
+        PreToolUse: [createManagedCommandHookEntry('"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-pre-tool.sh', "Edit|Create")],
+        PostToolUse: [createManagedCommandHookEntry('"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-post-tool.sh', "Edit|Create")],
+        Stop: [createManagedCommandHookEntry('"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-stop.sh')],
+      },
+    }, null, 2),
+  };
+}
+
+function getAuggieConfig(repoRoot: string): AdapterConfig {
+  const commonDir = getGitCommonDir(repoRoot);
+  const repoId = getRepoId(commonDir);
+  const userHome = getUserHomeDir();
+  const hooksDir = join(userHome, ".augment", "hooks");
+  const preTool = `git-lanes-${repoId}-pre-tool.sh`;
+  const postTool = `git-lanes-${repoId}-post-tool.sh`;
+  const stopTool = `git-lanes-${repoId}-stop.sh`;
+  const preToolPath = join(hooksDir, preTool);
+  const postToolPath = join(hooksDir, postTool);
+  const stopToolPath = join(hooksDir, stopTool);
+
+  return {
+    hooksDir,
+    files: {
+      [preTool]: getAuggiePreToolScript(commonDir),
+      [postTool]: getAuggiePostToolScript(commonDir),
+      [stopTool]: getAuggieStopScript(commonDir),
+    },
+    configFile: join(userHome, ".augment", "settings.json"),
+    mergeConfig: mergeManagedHookConfig,
+    configContent: JSON.stringify({
+      hooks: {
+        PreToolUse: [createManagedCommandHookEntry(preToolPath, "save-file|str-replace-editor|remove-files")],
+        PostToolUse: [createManagedCommandHookEntry(postToolPath, "save-file|str-replace-editor|remove-files")],
+        Stop: [createManagedCommandHookEntry(stopToolPath)],
+      },
+    }, null, 2),
   };
 }
 
@@ -275,7 +411,19 @@ function createClaudeCommandHookEntry(command: string): Record<string, unknown> 
   };
 }
 
-function mergeClaudeCodeConfig(
+function createManagedCommandHookEntry(command: string, matcher?: string): Record<string, unknown> {
+  return {
+    ...(matcher ? { matcher } : {}),
+    hooks: [
+      {
+        type: "command",
+        command,
+      },
+    ],
+  };
+}
+
+function mergeManagedHookConfig(
   existing: Record<string, unknown>,
   source: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -373,6 +521,332 @@ function getHookCommands(entries: unknown[]): string[] {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
+}
+
+function resolveAdapterPath(repoRoot: string, targetPath: string): string {
+  return isAbsolute(targetPath) ? targetPath : join(repoRoot, targetPath);
+}
+
+function getGitCommonDir(repoRoot: string): string {
+  const result = spawnSync(["git", "rev-parse", "--git-common-dir"], {
+    cwd: repoRoot,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+
+  const value = decodeOutput(result.stdout);
+  if (result.exitCode !== 0 || value === "") {
+    return repoRoot;
+  }
+
+  return isAbsolute(value) ? value : join(repoRoot, value);
+}
+
+function getRepoId(commonDir: string): string {
+  return createHash("sha1").update(commonDir).digest("hex").slice(0, 10);
+}
+
+function getUserHomeDir(): string {
+  return process.env.HOME || process.env.USERPROFILE || homedir();
+}
+
+function decodeOutput(value: { toString(): string } | Uint8Array | undefined): string {
+  return value ? value.toString().trim() : "";
+}
+
+function getDroidPreToolScript(): string {
+  return `#!/usr/bin/env bun
+import { readFileSync } from "fs";
+import { spawnSync } from "bun";
+
+function readEvent() {
+  try {
+    return JSON.parse(readFileSync(0, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function hasSession(cwd) {
+  return spawnSync(["git", "lanes", "which"], { cwd, stdio: ["ignore", "ignore", "ignore"] }).exitCode === 0;
+}
+
+const event = readEvent();
+const cwd = typeof event.cwd === "string" ? event.cwd : process.cwd();
+const toolName = typeof event.tool_name === "string" ? event.tool_name : "";
+
+if ((toolName === "Create" || toolName === "Edit") && !hasSession(cwd)) {
+  console.error("[git-lanes] No session active. Start one with: git lanes start <name>");
+}
+`;
+}
+
+function getDroidPostToolScript(): string {
+  return `#!/usr/bin/env bun
+import { readFileSync } from "fs";
+import { spawnSync } from "bun";
+
+function readEvent() {
+  try {
+    return JSON.parse(readFileSync(0, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function hasSession(cwd) {
+  return spawnSync(["git", "lanes", "which"], { cwd, stdio: ["ignore", "ignore", "ignore"] }).exitCode === 0;
+}
+
+const event = readEvent();
+const cwd = typeof event.cwd === "string" ? event.cwd : process.cwd();
+const toolName = typeof event.tool_name === "string" ? event.tool_name : "";
+
+if ((toolName !== "Create" && toolName !== "Edit") || !hasSession(cwd)) {
+  process.exit(0);
+}
+
+const filePath = typeof event.tool_response?.filePath === "string"
+  ? event.tool_response.filePath
+  : typeof event.tool_input?.file_path === "string"
+    ? event.tool_input.file_path
+    : "";
+
+if (filePath !== "") {
+  spawnSync(["git", "lanes", "track", filePath], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+}
+`;
+}
+
+function getDroidStopScript(): string {
+  return `#!/usr/bin/env bun
+import { readFileSync } from "fs";
+import { spawnSync } from "bun";
+
+const decoder = new TextDecoder();
+
+function readEvent() {
+  try {
+    return JSON.parse(readFileSync(0, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function outputText(value) {
+  return value ? decoder.decode(value).trim() : "";
+}
+
+function run(args, cwd) {
+  return spawnSync(args, { cwd, stdio: ["ignore", "pipe", "ignore"] });
+}
+
+function hasSession(cwd) {
+  return run(["git", "lanes", "which"], cwd).exitCode === 0;
+}
+
+const event = readEvent();
+const cwd = typeof event.cwd === "string" ? event.cwd : process.cwd();
+
+if (!hasSession(cwd)) {
+  process.exit(0);
+}
+
+const status = run(["git", "status", "--porcelain"], cwd);
+if (status.exitCode !== 0 || outputText(status.stdout) === "") {
+  process.exit(0);
+}
+
+spawnSync(["git", "add", "-A"], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+spawnSync(["git", "commit", "-m", "WIP: auto-checkpoint on session stop"], {
+  cwd,
+  stdio: ["ignore", "ignore", "ignore"],
+});
+`;
+}
+
+function getAuggiePreToolScript(commonDir: string): string {
+  return `#!/usr/bin/env bun
+import { readFileSync } from "fs";
+import { isAbsolute, join } from "path";
+import { spawnSync } from "bun";
+
+const EXPECTED_COMMON_DIR = ${JSON.stringify(commonDir)};
+const decoder = new TextDecoder();
+
+function readEvent() {
+  try {
+    return JSON.parse(readFileSync(0, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function outputText(value) {
+  return value ? decoder.decode(value).trim() : "";
+}
+
+function getWorkspaceRoot(event) {
+  return Array.isArray(event.workspace_roots) && typeof event.workspace_roots[0] === "string"
+    ? event.workspace_roots[0]
+    : process.cwd();
+}
+
+function getCommonDir(cwd) {
+  const result = spawnSync(["git", "rev-parse", "--git-common-dir"], {
+    cwd,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const value = outputText(result.stdout);
+  if (result.exitCode !== 0 || value === "") {
+    return "";
+  }
+  return isAbsolute(value) ? value : join(cwd, value);
+}
+
+function hasSession(cwd) {
+  return spawnSync(["git", "lanes", "which"], { cwd, stdio: ["ignore", "ignore", "ignore"] }).exitCode === 0;
+}
+
+const event = readEvent();
+const cwd = getWorkspaceRoot(event);
+const toolName = typeof event.tool_name === "string" ? event.tool_name : "";
+
+if (getCommonDir(cwd) !== EXPECTED_COMMON_DIR) {
+  process.exit(0);
+}
+
+if ((toolName === "save-file" || toolName === "str-replace-editor" || toolName === "remove-files") && !hasSession(cwd)) {
+  console.error("[git-lanes] No session active. Start one with: git lanes start <name>");
+}
+`;
+}
+
+function getAuggiePostToolScript(commonDir: string): string {
+  return `#!/usr/bin/env bun
+import { readFileSync } from "fs";
+import { isAbsolute, join } from "path";
+import { spawnSync } from "bun";
+
+const EXPECTED_COMMON_DIR = ${JSON.stringify(commonDir)};
+const decoder = new TextDecoder();
+
+function readEvent() {
+  try {
+    return JSON.parse(readFileSync(0, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function outputText(value) {
+  return value ? decoder.decode(value).trim() : "";
+}
+
+function getWorkspaceRoot(event) {
+  return Array.isArray(event.workspace_roots) && typeof event.workspace_roots[0] === "string"
+    ? event.workspace_roots[0]
+    : process.cwd();
+}
+
+function getCommonDir(cwd) {
+  const result = spawnSync(["git", "rev-parse", "--git-common-dir"], {
+    cwd,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const value = outputText(result.stdout);
+  if (result.exitCode !== 0 || value === "") {
+    return "";
+  }
+  return isAbsolute(value) ? value : join(cwd, value);
+}
+
+function hasSession(cwd) {
+  return spawnSync(["git", "lanes", "which"], { cwd, stdio: ["ignore", "ignore", "ignore"] }).exitCode === 0;
+}
+
+const event = readEvent();
+const cwd = getWorkspaceRoot(event);
+
+if (getCommonDir(cwd) !== EXPECTED_COMMON_DIR || !hasSession(cwd)) {
+  process.exit(0);
+}
+
+const changes = Array.isArray(event.file_changes) ? event.file_changes : [];
+const paths = [...new Set(changes
+  .map((change) => typeof change?.path === "string" ? change.path : "")
+  .filter((value) => value !== ""))];
+
+for (const filePath of paths) {
+  spawnSync(["git", "lanes", "track", filePath], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+}
+`;
+}
+
+function getAuggieStopScript(commonDir: string): string {
+  return `#!/usr/bin/env bun
+import { readFileSync } from "fs";
+import { isAbsolute, join } from "path";
+import { spawnSync } from "bun";
+
+const EXPECTED_COMMON_DIR = ${JSON.stringify(commonDir)};
+const decoder = new TextDecoder();
+
+function readEvent() {
+  try {
+    return JSON.parse(readFileSync(0, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function outputText(value) {
+  return value ? decoder.decode(value).trim() : "";
+}
+
+function getWorkspaceRoot(event) {
+  return Array.isArray(event.workspace_roots) && typeof event.workspace_roots[0] === "string"
+    ? event.workspace_roots[0]
+    : process.cwd();
+}
+
+function getCommonDir(cwd) {
+  const result = spawnSync(["git", "rev-parse", "--git-common-dir"], {
+    cwd,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const value = outputText(result.stdout);
+  if (result.exitCode !== 0 || value === "") {
+    return "";
+  }
+  return isAbsolute(value) ? value : join(cwd, value);
+}
+
+function run(args, cwd) {
+  return spawnSync(args, { cwd, stdio: ["ignore", "pipe", "ignore"] });
+}
+
+function hasSession(cwd) {
+  return run(["git", "lanes", "which"], cwd).exitCode === 0;
+}
+
+const event = readEvent();
+const cwd = getWorkspaceRoot(event);
+
+if (getCommonDir(cwd) !== EXPECTED_COMMON_DIR || !hasSession(cwd)) {
+  process.exit(0);
+}
+
+const status = run(["git", "status", "--porcelain"], cwd);
+if (status.exitCode !== 0 || outputText(status.stdout) === "") {
+  process.exit(0);
+}
+
+spawnSync(["git", "add", "-A"], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+spawnSync(["git", "commit", "-m", "WIP: auto-checkpoint on session stop"], {
+  cwd,
+  stdio: ["ignore", "ignore", "ignore"],
+});
+`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

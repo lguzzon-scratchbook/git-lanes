@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM"],
+    "types": ["bun-types"],
     "target": "ESNext",
     "module": "Preserve",
     "moduleDetection": "force",
@@ -25,6 +26,6 @@
     "declaration": true,
     "sourceMap": true
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "test"]
 }

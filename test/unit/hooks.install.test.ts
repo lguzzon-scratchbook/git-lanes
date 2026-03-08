@@ -7,6 +7,9 @@ import { installHooks } from "../../src/hooks/install.ts";
 const PRE_TOOL = ".claude/hooks/git-lanes-pre-tool";
 const POST_TOOL = ".claude/hooks/git-lanes-post-tool";
 const STOP_TOOL = ".claude/hooks/git-lanes-stop";
+const DROID_PRE_TOOL = '"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-pre-tool.sh';
+const DROID_POST_TOOL = '"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-post-tool.sh';
+const DROID_STOP_TOOL = '"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-stop.sh';
 
 describe("Claude hook installation", () => {
   test("installs Claude hooks with the nested settings format", async () => {
@@ -87,8 +90,146 @@ describe("Claude hook installation", () => {
   });
 });
 
+describe("OpenCode hook installation", () => {
+  test("installs a project plugin with verified hook entrypoints", async () => {
+    await withTempRepo((repoPath) => {
+      installHooks("opencode", repoPath);
+
+      const pluginPath = join(repoPath, ".opencode", "plugins", "git-lanes.js");
+      const plugin = readFileSync(pluginPath, "utf-8");
+
+      expect(existsSync(pluginPath)).toBe(true);
+      expect(plugin).toContain("tool.execute.after");
+      expect(plugin).toContain("session.idle");
+      expect(plugin).toContain('spawnSync(["git", "lanes", "track", filePath]');
+    }, "hooks-install-opencode");
+  });
+});
+
+describe("Droid hook installation", () => {
+  test("installs Droid hooks and project settings", async () => {
+    await withTempRepo((repoPath) => {
+      installHooks("droid", repoPath);
+
+      const settings = readJson(join(repoPath, ".factory", "settings.json"));
+      expect(countCommand(settings, "PreToolUse", DROID_PRE_TOOL)).toBe(1);
+      expect(countCommand(settings, "PostToolUse", DROID_POST_TOOL)).toBe(1);
+      expect(countCommand(settings, "Stop", DROID_STOP_TOOL)).toBe(1);
+      expect(existsSync(join(repoPath, ".factory", "hooks", "git-lanes-pre-tool.sh"))).toBe(true);
+      expect(existsSync(join(repoPath, ".factory", "hooks", "git-lanes-post-tool.sh"))).toBe(true);
+      expect(existsSync(join(repoPath, ".factory", "hooks", "git-lanes-stop.sh"))).toBe(true);
+    }, "hooks-install-droid-fresh");
+  });
+
+  test("updates existing Droid settings without duplicating managed commands", async () => {
+    await withTempRepo((repoPath) => {
+      const settingsPath = join(repoPath, ".factory", "settings.json");
+      mkdirSync(join(repoPath, ".factory"), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify({
+        hooks: {
+          PreToolUse: [
+            { matcher: "Create", hooks: [{ type: "command", command: "./custom-pre" }] },
+            { matcher: "Edit|Create", hooks: [{ type: "command", command: DROID_PRE_TOOL }] },
+          ],
+          PostToolUse: [
+            { hooks: [{ type: "command", command: DROID_POST_TOOL }] },
+            { hooks: [{ type: "command", command: "./custom-post" }] },
+          ],
+          Stop: [
+            { hooks: [{ type: "command", command: DROID_STOP_TOOL }] },
+          ],
+        },
+      }, null, 2));
+
+      installHooks("droid", repoPath);
+
+      const settings = readJson(settingsPath);
+      expect(countCommand(settings, "PreToolUse", "./custom-pre")).toBe(1);
+      expect(countCommand(settings, "PostToolUse", "./custom-post")).toBe(1);
+      expect(countCommand(settings, "PreToolUse", DROID_PRE_TOOL)).toBe(1);
+      expect(countCommand(settings, "PostToolUse", DROID_POST_TOOL)).toBe(1);
+      expect(countCommand(settings, "Stop", DROID_STOP_TOOL)).toBe(1);
+    }, "hooks-install-droid-update");
+  });
+});
+
+describe("Auggie hook installation", () => {
+  test("installs repo-scoped Auggie hooks into user settings", async () => {
+    await withTempRepo((repoPath) => {
+      const fakeHome = join(repoPath, ".fake-home");
+      mkdirSync(fakeHome, { recursive: true });
+
+      withEnv("HOME", fakeHome, () => {
+        installHooks("auggie", repoPath);
+
+        const settingsPath = join(fakeHome, ".augment", "settings.json");
+        const settings = readJson(settingsPath);
+        const preCommand = findManagedCommand(settings, "PreToolUse", fakeHome);
+        const postCommand = findManagedCommand(settings, "PostToolUse", fakeHome);
+        const stopCommand = findManagedCommand(settings, "Stop", fakeHome);
+
+        expect(preCommand).not.toBe("");
+        expect(postCommand).not.toBe("");
+        expect(stopCommand).not.toBe("");
+        expect(existsSync(preCommand)).toBe(true);
+        expect(existsSync(postCommand)).toBe(true);
+        expect(existsSync(stopCommand)).toBe(true);
+      });
+    }, "hooks-install-auggie-fresh");
+  });
+
+  test("updates existing Auggie settings without duplicating repo-managed commands", async () => {
+    await withTempRepo((repoPath) => {
+      const fakeHome = join(repoPath, ".fake-home");
+      const augmentDir = join(fakeHome, ".augment");
+      mkdirSync(augmentDir, { recursive: true });
+
+      withEnv("HOME", fakeHome, () => {
+        installHooks("auggie", repoPath);
+
+        const settingsPath = join(augmentDir, "settings.json");
+        const installed = readJson(settingsPath);
+        const preCommand = findManagedCommand(installed, "PreToolUse", fakeHome);
+        const postCommand = findManagedCommand(installed, "PostToolUse", fakeHome);
+        const stopCommand = findManagedCommand(installed, "Stop", fakeHome);
+
+        writeFileSync(settingsPath, JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              { hooks: [{ type: "command", command: preCommand }] },
+              { hooks: [{ type: "command", command: "./custom-pre" }] },
+            ],
+            PostToolUse: [
+              { hooks: [{ type: "command", command: postCommand }] },
+              { hooks: [{ type: "command", command: "./custom-post" }] },
+            ],
+            Stop: [
+              { hooks: [{ type: "command", command: stopCommand }] },
+            ],
+          },
+          permissions: { mode: "strict" },
+        }, null, 2));
+
+        installHooks("auggie", repoPath);
+
+        const settings = readJson(settingsPath);
+        expect(countCommand(settings, "PreToolUse", "./custom-pre")).toBe(1);
+        expect(countCommand(settings, "PostToolUse", "./custom-post")).toBe(1);
+        expect(countCommand(settings, "PreToolUse", preCommand)).toBe(1);
+        expect(countCommand(settings, "PostToolUse", postCommand)).toBe(1);
+        expect(countCommand(settings, "Stop", stopCommand)).toBe(1);
+        expect((settings.permissions as { mode: string }).mode).toBe("strict");
+      });
+    }, "hooks-install-auggie-update");
+  });
+});
+
 function readSettings(repoPath: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(join(repoPath, ".claude", "settings.json"), "utf-8"));
+  return readJson(join(repoPath, ".claude", "settings.json"));
+}
+
+function readJson(path: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(path, "utf-8"));
 }
 
 function countCommand(settings: Record<string, unknown>, eventName: string, command: string): number {
@@ -137,6 +278,26 @@ function getCommands(entry: unknown): string[] {
   }
 
   return commands;
+}
+
+function findManagedCommand(settings: Record<string, unknown>, eventName: string, fakeHome: string): string {
+  return getEntries(settings, eventName)
+    .flatMap(getCommands)
+    .find((command) => command.startsWith(join(fakeHome, ".augment", "hooks", "git-lanes-"))) ?? "";
+}
+
+function withEnv<T>(name: string, value: string, fn: () => T): T {
+  const previous = process.env[name];
+  process.env[name] = value;
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = previous;
+    }
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

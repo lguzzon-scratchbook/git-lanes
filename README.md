@@ -6,7 +6,7 @@
 
 **Parallel AI agent isolation for Git repositories.**
 
-git-lanes enables multiple AI coding agents (Claude Code, Cursor, Aider) to work simultaneously on the same Git repository without creating conflicts. Each agent gets its own isolated lane — a dedicated branch and worktree — so they never step on each other's work.
+git-lanes enables multiple AI coding agents (Claude Code, Cursor, Aider, OpenCode, Droid, Auggie) to work simultaneously on the same Git repository without creating conflicts. Each agent gets its own isolated lane — a dedicated branch and worktree — so they never step on each other's work.
 
 ## 🎬 Demo
 
@@ -43,7 +43,7 @@ git-lanes solves this by giving each agent its own isolated workspace with autom
 - **⚠️ Conflict Detection** — Built-in detection of file overlaps across active sessions with resolution suggestions
 - **💾 Work Preservation** — Auto-checkpoint captures work during timeouts or crashes via WIP commits
 - **🧹 Clean PR Generation** — Squash incremental edits into reviewable commits and generate pull requests
-- **🔌 Multi-Adapter Support** — Hooks for Claude Code, Cursor, and Aider
+- **🔌 Multi-Adapter Support** — Hooks for Claude Code, Cursor, Aider, OpenCode, Droid, and Auggie
 - **🌐 Multi-Forge PRs** — Create pull requests on GitHub, GitLab, or Bitbucket
 - **🔒 File Locking** — Prevent race conditions with atomic manifest operations
 - **📦 Zero Dependencies** — Uses only Bun built-ins, no external runtime packages
@@ -136,7 +136,7 @@ git lanes end
 |------|-------------|
 | `--session, -s <name>` | Specify session explicitly |
 | `--forge, -f <type>` | PR forge: `github`, `gitlab`, `bitbucket` |
-| `--adapter, -a <name>` | Hook adapter: `claude-code`, `cursor`, `aider` |
+| `--adapter, -a <name>` | Hook adapter: `claude-code`, `cursor`, `aider`, `opencode`, `droid`, `auggie` |
 | `--command, -c <cmd>` | Test command override |
 
 ## ⚙️ Configuration
@@ -201,6 +201,32 @@ git lanes install-hooks --adapter aider
 ```
 
 Installs pre-edit hooks to ensure session isolation.
+
+### OpenCode
+
+```bash
+git lanes install-hooks --adapter opencode
+```
+
+Installs a project plugin in `.opencode/plugins/` that observes `tool.execute.after` for file-writing tools and creates WIP checkpoints on `session.idle`.
+
+### Droid
+
+```bash
+git lanes install-hooks --adapter droid
+```
+
+Installs project-local `.factory/hooks/` scripts and merges `PreToolUse`, `PostToolUse`, and `Stop` entries into `.factory/settings.json` using Droid's documented `Edit|Create` matcher flow.
+
+### Auggie
+
+```bash
+git lanes install-hooks --adapter auggie
+```
+
+Installs repo-scoped hook scripts into `~/.augment/hooks/` and merges matching `PreToolUse`, `PostToolUse`, and `Stop` entries into `~/.augment/settings.json`.
+
+> Auggie currently documents hooks only in user/system `settings.json`, so this adapter uses user-level settings but scopes the installed hooks back to the current repository/worktree family.
 
 ## 🏗️ Architecture
 
