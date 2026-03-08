@@ -1,53 +1,57 @@
-import { existsSync, mkdirSync, symlinkSync } from "fs";
-import { join, resolve, normalize } from "path";
+import {existsSync, mkdirSync, symlinkSync} from "node:fs"
+import {join, normalize, resolve} from "node:path"
+import {loadConfig} from "./config.ts"
 import {
-  git,
-  gitSafe,
-  getRepoRoot,
-  getDefaultBranch,
-  getCurrentBranch,
-  getHeadSha,
+  add,
+  addWorktree,
+  branchExists,
   createBranch,
   deleteBranch,
-  addWorktree,
-  removeWorktree,
-  pruneWorktrees,
-  add,
-  commit as gitCommit,
-  resetSoft,
-  hasUncommittedChanges,
-  status,
   diff,
+  getCurrentBranch,
+  getDefaultBranch,
+  getHeadSha,
+  getRepoRoot,
+  git,
+  commit as gitCommit,
   merge as gitMerge,
+  gitSafe,
+  hasUncommittedChanges,
+  pruneWorktrees,
   pushWithUpstream,
-  branchExists,
-} from "./git.ts";
+  removeWorktree,
+  resetSoft,
+  status
+} from "./git.ts"
 import {
-  createManifest,
-  loadManifest,
-  saveManifest,
-  deleteManifest,
-  loadAllManifests,
   addChangeset,
-  removeLastChangeset,
-  updatePendingFiles,
-  getAllChangedFiles,
-  type SessionManifest,
   type Changeset,
-} from "./manifest.ts";
-import { loadConfig } from "./config.ts";
-import { validateSessionName, validateCommitMessage, validateFilePaths } from "./utils/validation.ts";
-import * as log from "./utils/logger.ts";
+  createManifest,
+  deleteManifest,
+  getAllChangedFiles,
+  loadAllManifests,
+  loadManifest,
+  removeLastChangeset,
+  type SessionManifest,
+  saveManifest,
+  updatePendingFiles
+} from "./manifest.ts"
+import * as log from "./utils/logger.ts"
+import {
+  validateCommitMessage,
+  validateFilePaths,
+  validateSessionName
+} from "./utils/validation.ts"
 
-const WORKTREES_DIR = ".lanes/worktrees";
+const WORKTREES_DIR = ".lanes/worktrees"
 
 export interface SessionInfo {
-  name: string;
-  branch: string;
-  worktreePath: string;
-  changesets: Changeset[];
-  pendingFiles: string[];
-  createdAt: string;
+  name: string
+  branch: string
+  worktreePath: string
+  changesets: Changeset[]
+  pendingFiles: string[]
+  createdAt: string
 }
 
 // ── Session Resolution ──
@@ -58,39 +62,39 @@ export interface SessionInfo {
  */
 export function resolveSession(
   explicitName?: string,
-  cwd?: string,
+  cwd?: string
 ): SessionManifest | null {
-  const repoRoot = getRepoRoot(cwd);
+  const repoRoot = getRepoRoot(cwd)
 
   // 1. Explicit name from --session flag
   if (explicitName) {
-    return loadManifest(explicitName, repoRoot);
+    return loadManifest(explicitName, repoRoot)
   }
 
   // 2. Detect from current worktree path
-  const currentPath = normalize(resolve(cwd ?? process.cwd()));
-  const manifests = loadAllManifests(repoRoot);
+  const currentPath = normalize(resolve(cwd ?? process.cwd()))
+  const manifests = loadAllManifests(repoRoot)
 
   for (const m of manifests) {
     if (normalize(resolve(m.worktreePath)) === currentPath) {
-      return m;
+      return m
     }
   }
 
   // 3. If only one session exists, use it
   if (manifests.length === 1) {
-    return manifests[0]!;
+    return manifests[0]!
   }
 
   // 4. PPID-based client affinity
-  const ppid = String(process.ppid);
+  const ppid = String(process.ppid)
   for (const m of manifests) {
     if (m.clientId === ppid) {
-      return m;
+      return m
     }
   }
 
-  return null;
+  return null
 }
 
 // ── Session Lifecycle ──
@@ -99,78 +103,92 @@ export function resolveSession(
  * Start a new isolated session.
  * Creates a branch, worktree, symlinks for shared dirs, and a manifest.
  */
-export function startSession(
-  name: string,
-  cwd?: string,
-): SessionInfo {
-  const repoRoot = getRepoRoot(cwd);
-  const config = loadConfig(repoRoot);
+export function startSession(name: string, cwd?: string): SessionInfo {
+  const repoRoot = getRepoRoot(cwd)
+  const config = loadConfig(repoRoot)
 
   // Validate session name
-  const validation = validateSessionName(name);
+  const validation = validateSessionName(name)
   if (!validation.valid) {
-    throw new Error(validation.error);
+    throw new Error(validation.error)
   }
 
   // Check if session already exists
-  const existing = loadManifest(name, repoRoot);
+  const existing = loadManifest(name, repoRoot)
   if (existing) {
-    throw new Error(`Session '${name}' already exists`);
+    throw new Error(`Session '${name}' already exists`)
   }
 
   // Check main branch policy
-  const currentBranch = getCurrentBranch(repoRoot);
-  const defaultBranch = getDefaultBranch(repoRoot);
-  if (currentBranch === defaultBranch && config.main_branch_policy === "block") {
+  const currentBranch = getCurrentBranch(repoRoot)
+  const defaultBranch = getDefaultBranch(repoRoot)
+  if (
+    currentBranch === defaultBranch &&
+    config.main_branch_policy === "block"
+  ) {
     // Allowed - we're creating a new branch from main
   }
 
-  const branchName = `${config.branch_prefix}${name}`;
-  const worktreePath = resolve(repoRoot, WORKTREES_DIR, name);
+  const branchName = `${config.branch_prefix}${name}`
+  const worktreePath = resolve(repoRoot, WORKTREES_DIR, name)
 
   // Rollback state tracking
-  let branchCreated = false;
-  let worktreeCreated = false;
+  let branchCreated = false
+  let worktreeCreated = false
 
   try {
     // Create the branch from current HEAD
-    createBranch(branchName, "HEAD", repoRoot);
-    branchCreated = true;
+    createBranch(branchName, "HEAD", repoRoot)
+    branchCreated = true
 
     // Create the worktree
-    mkdirSync(join(repoRoot, WORKTREES_DIR), { recursive: true });
-    addWorktree(worktreePath, branchName, repoRoot);
-    worktreeCreated = true;
+    mkdirSync(join(repoRoot, WORKTREES_DIR), {recursive: true})
+    addWorktree(worktreePath, branchName, repoRoot)
+    worktreeCreated = true
 
     // Set up symlinks for shared directories
     for (const sharedDir of config.shared_dirs) {
-      const targetPath = join(repoRoot, sharedDir);
-      const linkPath = join(worktreePath, sharedDir);
+      const targetPath = join(repoRoot, sharedDir)
+      const linkPath = join(worktreePath, sharedDir)
 
       if (existsSync(targetPath) && !existsSync(linkPath)) {
-        mkdirSync(join(linkPath, ".."), { recursive: true });
-        symlinkSync(targetPath, linkPath);
+        mkdirSync(join(linkPath, ".."), {recursive: true})
+        symlinkSync(targetPath, linkPath)
       }
     }
 
     // Create the manifest
-    const clientId = String(process.ppid);
-    const manifest = createManifest(name, branchName, worktreePath, clientId, repoRoot);
+    const clientId = String(process.ppid)
+    const manifest = createManifest(
+      name,
+      branchName,
+      worktreePath,
+      clientId,
+      repoRoot
+    )
 
-    log.success(`Session '${name}' started`);
-    log.info(`Branch: ${branchName}`);
-    log.info(`Worktree: ${worktreePath}`);
+    log.success(`Session '${name}' started`)
+    log.info(`Branch: ${branchName}`)
+    log.info(`Worktree: ${worktreePath}`)
 
-    return manifestToInfo(manifest);
+    return manifestToInfo(manifest)
   } catch (err) {
     // Rollback on failure
     if (worktreeCreated) {
-      try { removeWorktree(worktreePath, true, repoRoot); } catch { /* best effort */ }
+      try {
+        removeWorktree(worktreePath, true, repoRoot)
+      } catch {
+        /* best effort */
+      }
     }
     if (branchCreated) {
-      try { deleteBranch(branchName, true, repoRoot); } catch { /* best effort */ }
+      try {
+        deleteBranch(branchName, true, repoRoot)
+      } catch {
+        /* best effort */
+      }
     }
-    throw err;
+    throw err
   }
 }
 
@@ -180,66 +198,72 @@ export function startSession(
 export function endSession(
   sessionName?: string,
   commitMessage?: string,
-  cwd?: string,
+  cwd?: string
 ): void {
-  const repoRoot = getRepoRoot(cwd);
-  const manifest = resolveSession(sessionName, cwd);
+  const repoRoot = getRepoRoot(cwd)
+  const manifest = resolveSession(sessionName, cwd)
 
   if (!manifest) {
-    throw new Error(sessionName ? `Session '${sessionName}' not found` : "No active session found");
+    throw new Error(
+      sessionName
+        ? `Session '${sessionName}' not found`
+        : "No active session found"
+    )
   }
 
-  const worktreePath = manifest.worktreePath;
+  const worktreePath = manifest.worktreePath
 
   // Commit any pending changes
   if (hasUncommittedChanges(worktreePath)) {
-    const message = commitMessage ?? `WIP: session ${manifest.name} final commit`;
+    const message =
+      commitMessage ?? `WIP: session ${manifest.name} final commit`
     try {
-      add(["."], worktreePath);
-      gitCommit(message, worktreePath);
-      log.info(`Committed pending changes: ${message}`);
+      add(["."], worktreePath)
+      gitCommit(message, worktreePath)
+      log.info(`Committed pending changes: ${message}`)
     } catch {
-      log.warn("Could not commit pending changes");
+      log.warn("Could not commit pending changes")
     }
   }
 
   // Clean up
-  cleanupSession(manifest, repoRoot);
-  log.success(`Session '${manifest.name}' ended`);
+  cleanupSession(manifest, repoRoot)
+  log.success(`Session '${manifest.name}' ended`)
 }
 
 /**
  * Abort a session: discard all changes and clean up.
  */
-export function abortSession(
-  sessionName?: string,
-  cwd?: string,
-): void {
-  const repoRoot = getRepoRoot(cwd);
-  const manifest = resolveSession(sessionName, cwd);
+export function abortSession(sessionName?: string, cwd?: string): void {
+  const repoRoot = getRepoRoot(cwd)
+  const manifest = resolveSession(sessionName, cwd)
 
   if (!manifest) {
-    throw new Error(sessionName ? `Session '${sessionName}' not found` : "No active session found");
+    throw new Error(
+      sessionName
+        ? `Session '${sessionName}' not found`
+        : "No active session found"
+    )
   }
 
   // Force remove worktree (discards changes)
   try {
-    removeWorktree(manifest.worktreePath, true, repoRoot);
+    removeWorktree(manifest.worktreePath, true, repoRoot)
   } catch {
     // Worktree may already be gone
   }
 
   // Delete branch
   try {
-    deleteBranch(manifest.branch, true, repoRoot);
+    deleteBranch(manifest.branch, true, repoRoot)
   } catch {
     // Branch may already be gone
   }
 
   // Delete manifest
-  deleteManifest(manifest.name, repoRoot);
+  deleteManifest(manifest.name, repoRoot)
 
-  log.success(`Session '${manifest.name}' aborted`);
+  log.success(`Session '${manifest.name}' aborted`)
 }
 
 // ── Track & Commit ──
@@ -250,27 +274,27 @@ export function abortSession(
 export function trackFiles(
   files: string[],
   sessionName?: string,
-  cwd?: string,
+  cwd?: string
 ): void {
-  const repoRoot = getRepoRoot(cwd);
-  const manifest = resolveSession(sessionName, cwd);
+  const repoRoot = getRepoRoot(cwd)
+  const manifest = resolveSession(sessionName, cwd)
 
   if (!manifest) {
-    throw new Error("No active session found");
+    throw new Error("No active session found")
   }
 
-  const validation = validateFilePaths(files);
+  const validation = validateFilePaths(files)
   if (!validation.valid) {
-    throw new Error(validation.error);
+    throw new Error(validation.error)
   }
 
   // Stage files in the worktree
-  add(files, manifest.worktreePath);
+  add(files, manifest.worktreePath)
 
   // Update pending files in manifest
-  updatePendingFiles(manifest.name, files, repoRoot);
+  updatePendingFiles(manifest.name, files, repoRoot)
 
-  log.success(`Tracking ${files.length} file(s)`);
+  log.success(`Tracking ${files.length} file(s)`)
 }
 
 /**
@@ -279,39 +303,42 @@ export function trackFiles(
 export function sessionCommit(
   message: string,
   sessionName?: string,
-  cwd?: string,
+  cwd?: string
 ): Changeset {
-  const repoRoot = getRepoRoot(cwd);
-  const manifest = resolveSession(sessionName, cwd);
+  const repoRoot = getRepoRoot(cwd)
+  const manifest = resolveSession(sessionName, cwd)
 
   if (!manifest) {
-    throw new Error("No active session found");
+    throw new Error("No active session found")
   }
 
-  const msgValidation = validateCommitMessage(message);
+  const msgValidation = validateCommitMessage(message)
   if (!msgValidation.valid) {
-    throw new Error(msgValidation.error);
+    throw new Error(msgValidation.error)
   }
 
-  const worktreePath = manifest.worktreePath;
+  const worktreePath = manifest.worktreePath
 
   // Stage all changes if nothing is staged
-  const stagedOutput = gitSafe(["diff", "--cached", "--name-only"], worktreePath);
+  const stagedOutput = gitSafe(
+    ["diff", "--cached", "--name-only"],
+    worktreePath
+  )
   if (!stagedOutput.stdout) {
-    add(["."], worktreePath);
+    add(["."], worktreePath)
   }
 
   // Get the files that will be committed
-  const filesOutput = gitSafe(["diff", "--cached", "--name-only"], worktreePath);
-  const files = filesOutput.stdout ? filesOutput.stdout.split("\n") : [];
+  const filesOutput = gitSafe(["diff", "--cached", "--name-only"], worktreePath)
+  const files = filesOutput.stdout ? filesOutput.stdout.split("\n") : []
 
   if (files.length === 0) {
-    throw new Error("No changes to commit");
+    throw new Error("No changes to commit")
   }
 
   // Create the commit
-  gitCommit(message, worktreePath);
-  const sha = getHeadSha(worktreePath);
+  gitCommit(message, worktreePath)
+  const sha = getHeadSha(worktreePath)
 
   // Record the changeset in the manifest
   const changeset: Changeset = {
@@ -319,15 +346,15 @@ export function sessionCommit(
     sha,
     message,
     files,
-    timestamp: new Date().toISOString(),
-  };
+    timestamp: new Date().toISOString()
+  }
 
-  addChangeset(manifest.name, changeset, repoRoot);
+  addChangeset(manifest.name, changeset, repoRoot)
 
-  log.success(`Committed: ${message}`);
-  log.info(`SHA: ${sha.slice(0, 8)} | ${files.length} file(s)`);
+  log.success(`Committed: ${message}`)
+  log.info(`SHA: ${sha.slice(0, 8)} | ${files.length} file(s)`)
 
-  return changeset;
+  return changeset
 }
 
 /**
@@ -335,30 +362,30 @@ export function sessionCommit(
  */
 export function undoLastCommit(
   sessionName?: string,
-  cwd?: string,
+  cwd?: string
 ): Changeset | null {
-  const repoRoot = getRepoRoot(cwd);
-  const manifest = resolveSession(sessionName, cwd);
+  const repoRoot = getRepoRoot(cwd)
+  const manifest = resolveSession(sessionName, cwd)
 
   if (!manifest) {
-    throw new Error("No active session found");
+    throw new Error("No active session found")
   }
 
   if (manifest.changesets.length === 0) {
-    throw new Error("No commits to undo");
+    throw new Error("No commits to undo")
   }
 
   // Soft reset in the worktree
-  resetSoft("HEAD~1", manifest.worktreePath);
+  resetSoft("HEAD~1", manifest.worktreePath)
 
   // Remove changeset from manifest
-  const removed = removeLastChangeset(manifest.name, repoRoot);
+  const removed = removeLastChangeset(manifest.name, repoRoot)
 
   if (removed) {
-    log.success(`Undone: ${removed.message}`);
+    log.success(`Undone: ${removed.message}`)
   }
 
-  return removed;
+  return removed
 }
 
 /**
@@ -367,85 +394,87 @@ export function undoLastCommit(
 export function squashSession(
   message: string,
   sessionName?: string,
-  cwd?: string,
+  cwd?: string
 ): void {
-  const repoRoot = getRepoRoot(cwd);
-  const manifest = resolveSession(sessionName, cwd);
+  const repoRoot = getRepoRoot(cwd)
+  const manifest = resolveSession(sessionName, cwd)
 
   if (!manifest) {
-    throw new Error("No active session found");
+    throw new Error("No active session found")
   }
 
-  const msgValidation = validateCommitMessage(message);
+  const msgValidation = validateCommitMessage(message)
   if (!msgValidation.valid) {
-    throw new Error(msgValidation.error);
+    throw new Error(msgValidation.error)
   }
 
   if (manifest.changesets.length < 2) {
-    throw new Error("Need at least 2 commits to squash");
+    throw new Error("Need at least 2 commits to squash")
   }
 
-  const worktreePath = manifest.worktreePath;
-  const defaultBranch = getDefaultBranch(repoRoot);
+  const worktreePath = manifest.worktreePath
+  const defaultBranch = getDefaultBranch(repoRoot)
 
   // Find the merge base
-  const mergeBase = git(["merge-base", defaultBranch, "HEAD"], worktreePath);
+  const mergeBase = git(["merge-base", defaultBranch, "HEAD"], worktreePath)
 
   // Soft reset to merge base, keeping all changes staged
-  resetSoft(mergeBase, worktreePath);
+  resetSoft(mergeBase, worktreePath)
 
   // Create new squashed commit
-  add(["."], worktreePath);
-  gitCommit(message, worktreePath);
-  const sha = getHeadSha(worktreePath);
+  add(["."], worktreePath)
+  gitCommit(message, worktreePath)
+  const sha = getHeadSha(worktreePath)
 
   // Collect all files from all changesets
-  const allFiles = getAllChangedFiles(manifest);
+  const allFiles = getAllChangedFiles(manifest)
 
   // Replace all changesets with one
-  const reloaded = loadManifest(manifest.name, repoRoot);
+  const reloaded = loadManifest(manifest.name, repoRoot)
   if (reloaded) {
-    reloaded.changesets = [{
-      id: `cs-${Date.now()}`,
-      sha,
-      message,
-      files: allFiles,
-      timestamp: new Date().toISOString(),
-    }];
-    reloaded.pendingFiles = [];
-    saveManifest(reloaded, repoRoot);
+    reloaded.changesets = [
+      {
+        id: `cs-${Date.now()}`,
+        sha,
+        message,
+        files: allFiles,
+        timestamp: new Date().toISOString()
+      }
+    ]
+    reloaded.pendingFiles = []
+    saveManifest(reloaded, repoRoot)
   }
 
-  log.success(`Squashed ${manifest.changesets.length} commits into one`);
+  log.success(`Squashed ${manifest.changesets.length} commits into one`)
 }
 
 /**
  * Merge session branch into the default branch.
  */
-export function mergeSession(
-  sessionName?: string,
-  cwd?: string,
-): void {
-  const repoRoot = getRepoRoot(cwd);
-  const manifest = resolveSession(sessionName, cwd);
+export function mergeSession(sessionName?: string, cwd?: string): void {
+  const repoRoot = getRepoRoot(cwd)
+  const manifest = resolveSession(sessionName, cwd)
 
   if (!manifest) {
-    throw new Error("No active session found");
+    throw new Error("No active session found")
   }
 
-  const defaultBranch = getDefaultBranch(repoRoot);
+  const defaultBranch = getDefaultBranch(repoRoot)
 
   // Commit any pending changes first
   if (hasUncommittedChanges(manifest.worktreePath)) {
-    add(["."], manifest.worktreePath);
-    gitCommit(`WIP: session ${manifest.name} auto-commit before merge`, manifest.worktreePath);
+    add(["."], manifest.worktreePath)
+    gitCommit(
+      `WIP: session ${manifest.name} auto-commit before merge`,
+      manifest.worktreePath
+    )
   }
 
   // Switch to default branch in repo root and merge
-  git(["checkout", defaultBranch], repoRoot);
-  gitMerge(manifest.branch, `Merge session '${manifest.name}'`, repoRoot);
+  git(["checkout", defaultBranch], repoRoot)
+  gitMerge(manifest.branch, `Merge session '${manifest.name}'`, repoRoot)
 
-  log.success(`Merged session '${manifest.name}' into ${defaultBranch}`);
+  log.success(`Merged session '${manifest.name}' into ${defaultBranch}`)
 }
 
 // ── Session Info ──
@@ -455,55 +484,52 @@ export function mergeSession(
  */
 export function getSessionStatus(
   sessionName?: string,
-  cwd?: string,
-): { session: SessionInfo; status: string; diff: string } {
-  const manifest = resolveSession(sessionName, cwd);
+  cwd?: string
+): {session: SessionInfo; status: string; diff: string} {
+  const manifest = resolveSession(sessionName, cwd)
 
   if (!manifest) {
-    throw new Error("No active session found");
+    throw new Error("No active session found")
   }
 
-  const sessionStatus = status(manifest.worktreePath);
-  const sessionDiff = diff(false, manifest.worktreePath);
+  const sessionStatus = status(manifest.worktreePath)
+  const sessionDiff = diff(false, manifest.worktreePath)
 
   return {
     session: manifestToInfo(manifest),
     status: sessionStatus,
-    diff: sessionDiff,
-  };
+    diff: sessionDiff
+  }
 }
 
 /**
  * Get the commit log for a session.
  */
-export function getSessionLog(
-  sessionName?: string,
-  cwd?: string,
-): Changeset[] {
-  const manifest = resolveSession(sessionName, cwd);
+export function getSessionLog(sessionName?: string, cwd?: string): Changeset[] {
+  const manifest = resolveSession(sessionName, cwd)
 
   if (!manifest) {
-    throw new Error("No active session found");
+    throw new Error("No active session found")
   }
 
-  return manifest.changesets;
+  return manifest.changesets
 }
 
 /**
  * List all active sessions.
  */
 export function listSessions(cwd?: string): SessionInfo[] {
-  const repoRoot = getRepoRoot(cwd);
-  const manifests = loadAllManifests(repoRoot);
-  return manifests.map(manifestToInfo);
+  const repoRoot = getRepoRoot(cwd)
+  const manifests = loadAllManifests(repoRoot)
+  return manifests.map(manifestToInfo)
 }
 
 /**
  * Identify which session is currently active.
  */
 export function whichSession(cwd?: string): SessionInfo | null {
-  const manifest = resolveSession(undefined, cwd);
-  return manifest ? manifestToInfo(manifest) : null;
+  const manifest = resolveSession(undefined, cwd)
+  return manifest ? manifestToInfo(manifest) : null
 }
 
 // ── Maintenance ──
@@ -511,56 +537,63 @@ export function whichSession(cwd?: string): SessionInfo | null {
 /**
  * Prune orphaned worktrees, branches, and manifests.
  */
-export function pruneSessions(cwd?: string): { removed: string[] } {
-  const repoRoot = getRepoRoot(cwd);
-  const removed: string[] = [];
+export function pruneSessions(cwd?: string): {removed: string[]} {
+  const repoRoot = getRepoRoot(cwd)
+  const removed: string[] = []
 
   // Prune git worktrees
-  pruneWorktrees(repoRoot);
+  pruneWorktrees(repoRoot)
 
   // Check each manifest for orphaned sessions
-  const manifests = loadAllManifests(repoRoot);
+  const manifests = loadAllManifests(repoRoot)
   for (const manifest of manifests) {
-    const worktreeExists = existsSync(manifest.worktreePath);
-    const branchExist = branchExists(manifest.branch, repoRoot);
+    const worktreeExists = existsSync(manifest.worktreePath)
+    const branchExist = branchExists(manifest.branch, repoRoot)
 
     if (!worktreeExists || !branchExist) {
       // Clean up orphaned session
       if (worktreeExists) {
-        try { removeWorktree(manifest.worktreePath, true, repoRoot); } catch { /* skip */ }
+        try {
+          removeWorktree(manifest.worktreePath, true, repoRoot)
+        } catch {
+          /* skip */
+        }
       }
       if (branchExist) {
-        try { deleteBranch(manifest.branch, true, repoRoot); } catch { /* skip */ }
+        try {
+          deleteBranch(manifest.branch, true, repoRoot)
+        } catch {
+          /* skip */
+        }
       }
-      deleteManifest(manifest.name, repoRoot);
-      removed.push(manifest.name);
+      deleteManifest(manifest.name, repoRoot)
+      removed.push(manifest.name)
     }
   }
 
   if (removed.length > 0) {
-    log.success(`Pruned ${removed.length} orphaned session(s): ${removed.join(", ")}`);
+    log.success(
+      `Pruned ${removed.length} orphaned session(s): ${removed.join(", ")}`
+    )
   } else {
-    log.info("No orphaned sessions found");
+    log.info("No orphaned sessions found")
   }
 
-  return { removed };
+  return {removed}
 }
 
 /**
  * Push session branch to remote.
  */
-export function pushSession(
-  sessionName?: string,
-  cwd?: string,
-): void {
-  const manifest = resolveSession(sessionName, cwd);
+export function pushSession(sessionName?: string, cwd?: string): void {
+  const manifest = resolveSession(sessionName, cwd)
 
   if (!manifest) {
-    throw new Error("No active session found");
+    throw new Error("No active session found")
   }
 
-  pushWithUpstream("origin", manifest.branch, manifest.worktreePath);
-  log.success(`Pushed branch '${manifest.branch}' to origin`);
+  pushWithUpstream("origin", manifest.branch, manifest.worktreePath)
+  log.success(`Pushed branch '${manifest.branch}' to origin`)
 }
 
 // ── Helpers ──
@@ -568,13 +601,17 @@ export function pushSession(
 function cleanupSession(manifest: SessionManifest, repoRoot: string): void {
   // Remove worktree
   try {
-    removeWorktree(manifest.worktreePath, false, repoRoot);
+    removeWorktree(manifest.worktreePath, false, repoRoot)
   } catch {
-    try { removeWorktree(manifest.worktreePath, true, repoRoot); } catch { /* skip */ }
+    try {
+      removeWorktree(manifest.worktreePath, true, repoRoot)
+    } catch {
+      /* skip */
+    }
   }
 
   // Delete manifest
-  deleteManifest(manifest.name, repoRoot);
+  deleteManifest(manifest.name, repoRoot)
 }
 
 function manifestToInfo(manifest: SessionManifest): SessionInfo {
@@ -584,6 +621,6 @@ function manifestToInfo(manifest: SessionManifest): SessionInfo {
     worktreePath: manifest.worktreePath,
     changesets: manifest.changesets,
     pendingFiles: manifest.pendingFiles,
-    createdAt: manifest.createdAt,
-  };
+    createdAt: manifest.createdAt
+  }
 }

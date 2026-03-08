@@ -1,109 +1,120 @@
-import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { createHash } from "crypto";
-import { dirname, isAbsolute, join } from "path";
-import { spawnSync } from "bun";
-import { getRepoRoot } from "../git.ts";
-import * as log from "../utils/logger.ts";
+import {createHash} from "node:crypto"
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync
+} from "node:fs"
+import {homedir} from "node:os"
+import {dirname, isAbsolute, join} from "node:path"
+import {spawnSync} from "bun"
+import {getRepoRoot} from "../git.ts"
+import * as log from "../utils/logger.ts"
 
 interface AdapterConfig {
-  hooksDir: string;
-  files: Record<string, string>;
-  configFile?: string;
-  configContent?: string;
-  mergeConfig?: (existing: Record<string, unknown>, source: Record<string, unknown>) => Record<string, unknown>;
+  hooksDir: string
+  files: Record<string, string>
+  configFile?: string
+  configContent?: string
+  mergeConfig?: (
+    existing: Record<string, unknown>,
+    source: Record<string, unknown>
+  ) => Record<string, unknown>
 }
 
 const ADAPTERS: Record<string, (repoRoot: string) => AdapterConfig> = {
   "claude-code": getClaudeCodeConfig,
-  "cursor": getCursorConfig,
-  "aider": getAiderConfig,
-  "opencode": getOpenCodeConfig,
-  "droid": getDroidConfig,
-  "auggie": getAuggieConfig,
-};
+  cursor: getCursorConfig,
+  aider: getAiderConfig,
+  opencode: getOpenCodeConfig,
+  droid: getDroidConfig,
+  auggie: getAuggieConfig
+}
 
 /**
  * Install hooks for the specified adapter.
  */
 export function installHooks(adapter = "claude-code", cwd?: string): void {
-  const repoRoot = getRepoRoot(cwd);
-  const configFn = ADAPTERS[adapter];
+  const repoRoot = getRepoRoot(cwd)
+  const configFn = ADAPTERS[adapter]
 
   if (!configFn) {
-    throw new Error(`Unknown adapter: ${adapter}. Available: ${Object.keys(ADAPTERS).join(", ")}`);
+    throw new Error(
+      `Unknown adapter: ${adapter}. Available: ${Object.keys(ADAPTERS).join(", ")}`
+    )
   }
 
-  const config = configFn(repoRoot);
+  const config = configFn(repoRoot)
 
   // Create hooks directory
-  const hooksPath = resolveAdapterPath(repoRoot, config.hooksDir);
-  mkdirSync(hooksPath, { recursive: true });
+  const hooksPath = resolveAdapterPath(repoRoot, config.hooksDir)
+  mkdirSync(hooksPath, {recursive: true})
 
   // Write hook files
   for (const [filename, content] of Object.entries(config.files)) {
-    const filePath = join(hooksPath, filename);
-    writeFileSync(filePath, content, { mode: 0o755 });
-    log.info(`Installed: ${filePath}`);
+    const filePath = join(hooksPath, filename)
+    writeFileSync(filePath, content, {mode: 0o755})
+    log.info(`Installed: ${filePath}`)
   }
 
   // Write config file if specified
   if (config.configFile && config.configContent) {
-    const configPath = resolveAdapterPath(repoRoot, config.configFile);
-    mkdirSync(dirname(configPath), { recursive: true });
+    const configPath = resolveAdapterPath(repoRoot, config.configFile)
+    mkdirSync(dirname(configPath), {recursive: true})
 
     // Merge with existing config if present
     if (existsSync(configPath)) {
       try {
-        const existing = JSON.parse(readFileSync(configPath, "utf-8"));
-        const newConfig = JSON.parse(config.configContent);
+        const existing = JSON.parse(readFileSync(configPath, "utf-8"))
+        const newConfig = JSON.parse(config.configContent)
         const merged = config.mergeConfig
           ? config.mergeConfig(existing, newConfig)
-          : deepMerge(existing, newConfig);
-        writeFileSync(configPath, JSON.stringify(merged, null, 2));
+          : deepMerge(existing, newConfig)
+        writeFileSync(configPath, JSON.stringify(merged, null, 2))
       } catch {
-        writeFileSync(configPath, config.configContent);
+        writeFileSync(configPath, config.configContent)
       }
     } else {
-      writeFileSync(configPath, config.configContent);
+      writeFileSync(configPath, config.configContent)
     }
-    log.info(`Config: ${configPath}`);
+    log.info(`Config: ${configPath}`)
   }
 
   // Write rules file
-  const rulesDir = join(repoRoot, ".claude", "rules");
-  mkdirSync(rulesDir, { recursive: true });
-  const rulesPath = join(rulesDir, "git-lanes.md");
-  writeFileSync(rulesPath, getAgentRules());
-  log.info(`Rules: ${rulesPath}`);
+  const rulesDir = join(repoRoot, ".claude", "rules")
+  mkdirSync(rulesDir, {recursive: true})
+  const rulesPath = join(rulesDir, "git-lanes.md")
+  writeFileSync(rulesPath, getAgentRules())
+  log.info(`Rules: ${rulesPath}`)
 
-  log.success(`${adapter} hooks installed`);
+  log.success(`${adapter} hooks installed`)
 }
 
 /**
  * Uninstall hooks for the specified adapter.
  */
 export function uninstallHooks(adapter = "claude-code", cwd?: string): void {
-  const repoRoot = getRepoRoot(cwd);
-  const configFn = ADAPTERS[adapter];
+  const repoRoot = getRepoRoot(cwd)
+  const configFn = ADAPTERS[adapter]
 
   if (!configFn) {
-    throw new Error(`Unknown adapter: ${adapter}`);
+    throw new Error(`Unknown adapter: ${adapter}`)
   }
 
-  const config = configFn(repoRoot);
-  const hooksPath = resolveAdapterPath(repoRoot, config.hooksDir);
+  const config = configFn(repoRoot)
+  const hooksPath = resolveAdapterPath(repoRoot, config.hooksDir)
 
   // Remove hook files
   for (const filename of Object.keys(config.files)) {
-    const filePath = join(hooksPath, filename);
+    const filePath = join(hooksPath, filename)
     if (existsSync(filePath)) {
-      unlinkSync(filePath);
-      log.info(`Removed: ${filePath}`);
+      unlinkSync(filePath)
+      log.info(`Removed: ${filePath}`)
     }
   }
 
-  log.success(`${adapter} hooks uninstalled`);
+  log.success(`${adapter} hooks uninstalled`)
 }
 
 // ── Adapter Configurations ──
@@ -166,18 +177,26 @@ if [ -n "$SESSION" ]; then
 fi
 
 exit 0
-`,
+`
     },
     configFile: ".claude/settings.json",
     mergeConfig: mergeManagedHookConfig,
-    configContent: JSON.stringify({
-      hooks: {
-        PreToolUse: [createClaudeCommandHookEntry(".claude/hooks/git-lanes-pre-tool")],
-        PostToolUse: [createClaudeCommandHookEntry(".claude/hooks/git-lanes-post-tool")],
-        Stop: [createClaudeCommandHookEntry(".claude/hooks/git-lanes-stop")],
+    configContent: JSON.stringify(
+      {
+        hooks: {
+          PreToolUse: [
+            createClaudeCommandHookEntry(".claude/hooks/git-lanes-pre-tool")
+          ],
+          PostToolUse: [
+            createClaudeCommandHookEntry(".claude/hooks/git-lanes-post-tool")
+          ],
+          Stop: [createClaudeCommandHookEntry(".claude/hooks/git-lanes-stop")]
+        }
       },
-    }, null, 2),
-  };
+      null,
+      2
+    )
+  }
 }
 
 function getCursorConfig(): AdapterConfig {
@@ -195,9 +214,9 @@ if git lanes which > /dev/null 2>&1; then
 fi
 
 exit 0
-`,
-    },
-  };
+`
+    }
+  }
 }
 
 function getAiderConfig(): AdapterConfig {
@@ -213,9 +232,9 @@ if ! git lanes which > /dev/null 2>&1; then
 fi
 
 exit 0
-`,
-    },
-  };
+`
+    }
+  }
 }
 
 function getOpenCodeConfig(): AdapterConfig {
@@ -292,9 +311,9 @@ export const GitLanesPlugin = async ({ directory, worktree }) => {
     },
   };
 };
-`,
-    },
-  };
+`
+    }
+  }
 }
 
 function getDroidConfig(): AdapterConfig {
@@ -303,49 +322,81 @@ function getDroidConfig(): AdapterConfig {
     files: {
       "git-lanes-pre-tool.sh": getDroidPreToolScript(),
       "git-lanes-post-tool.sh": getDroidPostToolScript(),
-      "git-lanes-stop.sh": getDroidStopScript(),
+      "git-lanes-stop.sh": getDroidStopScript()
     },
     configFile: ".factory/settings.json",
     mergeConfig: mergeManagedHookConfig,
-    configContent: JSON.stringify({
-      hooks: {
-        PreToolUse: [createManagedCommandHookEntry('"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-pre-tool.sh', "Edit|Create")],
-        PostToolUse: [createManagedCommandHookEntry('"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-post-tool.sh', "Edit|Create")],
-        Stop: [createManagedCommandHookEntry('"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-stop.sh')],
+    configContent: JSON.stringify(
+      {
+        hooks: {
+          PreToolUse: [
+            createManagedCommandHookEntry(
+              '"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-pre-tool.sh',
+              "Edit|Create"
+            )
+          ],
+          PostToolUse: [
+            createManagedCommandHookEntry(
+              '"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-post-tool.sh',
+              "Edit|Create"
+            )
+          ],
+          Stop: [
+            createManagedCommandHookEntry(
+              '"$FACTORY_PROJECT_DIR"/.factory/hooks/git-lanes-stop.sh'
+            )
+          ]
+        }
       },
-    }, null, 2),
-  };
+      null,
+      2
+    )
+  }
 }
 
 function getAuggieConfig(repoRoot: string): AdapterConfig {
-  const commonDir = getGitCommonDir(repoRoot);
-  const repoId = getRepoId(commonDir);
-  const userHome = getUserHomeDir();
-  const hooksDir = join(userHome, ".augment", "hooks");
-  const preTool = `git-lanes-${repoId}-pre-tool.sh`;
-  const postTool = `git-lanes-${repoId}-post-tool.sh`;
-  const stopTool = `git-lanes-${repoId}-stop.sh`;
-  const preToolPath = join(hooksDir, preTool);
-  const postToolPath = join(hooksDir, postTool);
-  const stopToolPath = join(hooksDir, stopTool);
+  const commonDir = getGitCommonDir(repoRoot)
+  const repoId = getRepoId(commonDir)
+  const userHome = getUserHomeDir()
+  const hooksDir = join(userHome, ".augment", "hooks")
+  const preTool = `git-lanes-${repoId}-pre-tool.sh`
+  const postTool = `git-lanes-${repoId}-post-tool.sh`
+  const stopTool = `git-lanes-${repoId}-stop.sh`
+  const preToolPath = join(hooksDir, preTool)
+  const postToolPath = join(hooksDir, postTool)
+  const stopToolPath = join(hooksDir, stopTool)
 
   return {
     hooksDir,
     files: {
       [preTool]: getAuggiePreToolScript(commonDir),
       [postTool]: getAuggiePostToolScript(commonDir),
-      [stopTool]: getAuggieStopScript(commonDir),
+      [stopTool]: getAuggieStopScript(commonDir)
     },
     configFile: join(userHome, ".augment", "settings.json"),
     mergeConfig: mergeManagedHookConfig,
-    configContent: JSON.stringify({
-      hooks: {
-        PreToolUse: [createManagedCommandHookEntry(preToolPath, "save-file|str-replace-editor|remove-files")],
-        PostToolUse: [createManagedCommandHookEntry(postToolPath, "save-file|str-replace-editor|remove-files")],
-        Stop: [createManagedCommandHookEntry(stopToolPath)],
+    configContent: JSON.stringify(
+      {
+        hooks: {
+          PreToolUse: [
+            createManagedCommandHookEntry(
+              preToolPath,
+              "save-file|str-replace-editor|remove-files"
+            )
+          ],
+          PostToolUse: [
+            createManagedCommandHookEntry(
+              postToolPath,
+              "save-file|str-replace-editor|remove-files"
+            )
+          ],
+          Stop: [createManagedCommandHookEntry(stopToolPath)]
+        }
       },
-    }, null, 2),
-  };
+      null,
+      2
+    )
+  }
 }
 
 function getAgentRules(): string {
@@ -373,184 +424,182 @@ When working in this repository, follow these rules:
 
 7. **End the session** when your task is complete:
    \`git lanes end -m "completed: add search feature"\`
-`;
+`
 }
 
-function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
-  const result = { ...target };
+function deepMerge(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>
+): Record<string, unknown> {
+  const result = {...target}
 
   for (const key of Object.keys(source)) {
-    const targetVal = target[key];
-    const sourceVal = source[key];
+    const targetVal = target[key]
+    const sourceVal = source[key]
 
     if (
-      targetVal && sourceVal &&
-      typeof targetVal === "object" && typeof sourceVal === "object" &&
-      !Array.isArray(targetVal) && !Array.isArray(sourceVal)
+      targetVal &&
+      sourceVal &&
+      typeof targetVal === "object" &&
+      typeof sourceVal === "object" &&
+      !Array.isArray(targetVal) &&
+      !Array.isArray(sourceVal)
     ) {
       result[key] = deepMerge(
         targetVal as Record<string, unknown>,
-        sourceVal as Record<string, unknown>,
-      );
+        sourceVal as Record<string, unknown>
+      )
     } else {
-      result[key] = sourceVal;
+      result[key] = sourceVal
     }
   }
 
-  return result;
+  return result
 }
 
-function createClaudeCommandHookEntry(command: string): Record<string, unknown> {
-  return {
-    hooks: [
-      {
-        type: "command",
-        command,
-      },
-    ],
-  };
+function createClaudeCommandHookEntry(
+  command: string
+): Record<string, unknown> {
+  return {hooks: [{type: "command", command}]}
 }
 
-function createManagedCommandHookEntry(command: string, matcher?: string): Record<string, unknown> {
-  return {
-    ...(matcher ? { matcher } : {}),
-    hooks: [
-      {
-        type: "command",
-        command,
-      },
-    ],
-  };
+function createManagedCommandHookEntry(
+  command: string,
+  matcher?: string
+): Record<string, unknown> {
+  return {...(matcher ? {matcher} : {}), hooks: [{type: "command", command}]}
 }
 
 function mergeManagedHookConfig(
   existing: Record<string, unknown>,
-  source: Record<string, unknown>,
+  source: Record<string, unknown>
 ): Record<string, unknown> {
-  const sourceWithoutHooks = { ...source };
-  delete sourceWithoutHooks.hooks;
+  const sourceWithoutHooks = {...source}
+  delete sourceWithoutHooks.hooks
 
-  const merged = deepMerge(existing, sourceWithoutHooks);
-  const existingHooks = asRecord(existing.hooks);
-  const sourceHooks = asRecord(source.hooks);
-  const mergedHooks: Record<string, unknown> = { ...existingHooks };
+  const merged = deepMerge(existing, sourceWithoutHooks)
+  const existingHooks = asRecord(existing.hooks)
+  const sourceHooks = asRecord(source.hooks)
+  const mergedHooks: Record<string, unknown> = {...existingHooks}
 
   for (const [eventName, sourceEntries] of Object.entries(sourceHooks)) {
-    const desiredEntries = Array.isArray(sourceEntries) ? sourceEntries : [];
-    const managedCommands = new Set(getHookCommands(desiredEntries));
-    const currentEntries = Array.isArray(existingHooks[eventName]) ? existingHooks[eventName] : [];
+    const desiredEntries = Array.isArray(sourceEntries) ? sourceEntries : []
+    const managedCommands = new Set(getHookCommands(desiredEntries))
+    const currentEntries = Array.isArray(existingHooks[eventName])
+      ? existingHooks[eventName]
+      : []
 
     const sanitizedEntries = currentEntries
-      .map((entry) => removeManagedCommandsFromHookEntry(entry, managedCommands))
-      .filter((entry): entry is unknown => entry !== null);
+      .map(entry => removeManagedCommandsFromHookEntry(entry, managedCommands))
+      .filter((entry): entry is unknown => entry !== null)
 
-    mergedHooks[eventName] = [...sanitizedEntries, ...desiredEntries];
+    mergedHooks[eventName] = [...sanitizedEntries, ...desiredEntries]
   }
 
-  return {
-    ...merged,
-    hooks: mergedHooks,
-  };
+  return {...merged, hooks: mergedHooks}
 }
 
 function removeManagedCommandsFromHookEntry(
   entry: unknown,
-  managedCommands: Set<string>,
+  managedCommands: Set<string>
 ): unknown | null {
   if (!isRecord(entry)) {
-    return entry;
+    return entry
   }
 
   if (typeof entry.command === "string" && managedCommands.has(entry.command)) {
-    return null;
+    return null
   }
 
   if (!Array.isArray(entry.hooks)) {
-    return entry;
+    return entry
   }
 
-  let removed = false;
-  const remainingHooks = entry.hooks.filter((hook) => {
-    if (isRecord(hook) && typeof hook.command === "string" && managedCommands.has(hook.command)) {
-      removed = true;
-      return false;
+  let removed = false
+  const remainingHooks = entry.hooks.filter(hook => {
+    if (
+      isRecord(hook) &&
+      typeof hook.command === "string" &&
+      managedCommands.has(hook.command)
+    ) {
+      removed = true
+      return false
     }
 
-    return true;
-  });
+    return true
+  })
 
   if (!removed) {
-    return entry;
+    return entry
   }
 
   if (remainingHooks.length === 0) {
-    return null;
+    return null
   }
 
-  return {
-    ...entry,
-    hooks: remainingHooks,
-  };
+  return {...entry, hooks: remainingHooks}
 }
 
 function getHookCommands(entries: unknown[]): string[] {
-  const commands = new Set<string>();
+  const commands = new Set<string>()
 
   for (const entry of entries) {
     if (!isRecord(entry)) {
-      continue;
+      continue
     }
 
     if (typeof entry.command === "string") {
-      commands.add(entry.command);
+      commands.add(entry.command)
     }
 
     if (!Array.isArray(entry.hooks)) {
-      continue;
+      continue
     }
 
     for (const hook of entry.hooks) {
       if (isRecord(hook) && typeof hook.command === "string") {
-        commands.add(hook.command);
+        commands.add(hook.command)
       }
     }
   }
 
-  return [...commands];
+  return [...commands]
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? value : {};
+  return isRecord(value) ? value : {}
 }
 
 function resolveAdapterPath(repoRoot: string, targetPath: string): string {
-  return isAbsolute(targetPath) ? targetPath : join(repoRoot, targetPath);
+  return isAbsolute(targetPath) ? targetPath : join(repoRoot, targetPath)
 }
 
 function getGitCommonDir(repoRoot: string): string {
   const result = spawnSync(["git", "rev-parse", "--git-common-dir"], {
     cwd: repoRoot,
-    stdio: ["ignore", "pipe", "ignore"],
-  });
+    stdio: ["ignore", "pipe", "ignore"]
+  })
 
-  const value = decodeOutput(result.stdout);
+  const value = decodeOutput(result.stdout)
   if (result.exitCode !== 0 || value === "") {
-    return repoRoot;
+    return repoRoot
   }
 
-  return isAbsolute(value) ? value : join(repoRoot, value);
+  return isAbsolute(value) ? value : join(repoRoot, value)
 }
 
 function getRepoId(commonDir: string): string {
-  return createHash("sha1").update(commonDir).digest("hex").slice(0, 10);
+  return createHash("sha1").update(commonDir).digest("hex").slice(0, 10)
 }
 
 function getUserHomeDir(): string {
-  return process.env.HOME || process.env.USERPROFILE || homedir();
+  return process.env.HOME || process.env.USERPROFILE || homedir()
 }
 
-function decodeOutput(value: { toString(): string } | Uint8Array | undefined): string {
-  return value ? value.toString().trim() : "";
+function decodeOutput(
+  value: {toString(): string} | Uint8Array | undefined
+): string {
+  return value ? value.toString().trim() : ""
 }
 
 function getDroidPreToolScript(): string {
@@ -577,7 +626,7 @@ const toolName = typeof event.tool_name === "string" ? event.tool_name : "";
 if ((toolName === "Create" || toolName === "Edit") && !hasSession(cwd)) {
   console.error("[git-lanes] No session active. Start one with: git lanes start <name>");
 }
-`;
+`
 }
 
 function getDroidPostToolScript(): string {
@@ -614,7 +663,7 @@ const filePath = typeof event.tool_response?.filePath === "string"
 if (filePath !== "") {
   spawnSync(["git", "lanes", "track", filePath], { cwd, stdio: ["ignore", "ignore", "ignore"] });
 }
-`;
+`
 }
 
 function getDroidStopScript(): string {
@@ -661,7 +710,7 @@ spawnSync(["git", "commit", "-m", "WIP: auto-checkpoint on session stop"], {
   cwd,
   stdio: ["ignore", "ignore", "ignore"],
 });
-`;
+`
 }
 
 function getAuggiePreToolScript(commonDir: string): string {
@@ -718,7 +767,7 @@ if (getCommonDir(cwd) !== EXPECTED_COMMON_DIR) {
 if ((toolName === "save-file" || toolName === "str-replace-editor" || toolName === "remove-files") && !hasSession(cwd)) {
   console.error("[git-lanes] No session active. Start one with: git lanes start <name>");
 }
-`;
+`
 }
 
 function getAuggiePostToolScript(commonDir: string): string {
@@ -779,7 +828,7 @@ const paths = [...new Set(changes
 for (const filePath of paths) {
   spawnSync(["git", "lanes", "track", filePath], { cwd, stdio: ["ignore", "ignore", "ignore"] });
 }
-`;
+`
 }
 
 function getAuggieStopScript(commonDir: string): string {
@@ -846,9 +895,9 @@ spawnSync(["git", "commit", "-m", "WIP: auto-checkpoint on session stop"], {
   cwd,
   stdio: ["ignore", "ignore", "ignore"],
 });
-`;
+`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }

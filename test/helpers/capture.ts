@@ -1,12 +1,12 @@
-import { spawnSync } from "bun";
-import { join } from "path";
+import {join} from "node:path"
+import {spawnSync} from "bun"
 
-const CLI_PATH = join(import.meta.dir, "../../src/cli.ts");
+const CLI_PATH = join(import.meta.dir, "../../src/cli.ts")
 
 export interface CapturedOutput {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
+  stdout: string
+  stderr: string
+  exitCode: number
 }
 
 /**
@@ -17,12 +17,12 @@ export function runCLI(args: string[], cwd?: string): CapturedOutput {
     cwd: cwd ?? process.cwd(),
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env },
-  });
+    env: {...process.env}
+  })
 
   return {
     stdout: result.stdout.toString(),
     stderr: result.stderr.toString(),
-    exitCode: result.exitCode,
-  };
+    exitCode: result.exitCode
+  }
 }

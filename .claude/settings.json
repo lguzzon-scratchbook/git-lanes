@@ -3,30 +3,21 @@
     "PreToolUse": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/git-lanes-pre-tool"
-          }
+          {"type": "command", "command": ".claude/hooks/git-lanes-pre-tool"}
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/git-lanes-stop"
-          }
+          {"type": "command", "command": ".claude/hooks/git-lanes-stop"}
         ]
       }
     ],
     "PostToolUse": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/git-lanes-post-tool"
-          }
+          {"type": "command", "command": ".claude/hooks/git-lanes-post-tool"}
         ]
       },
       {

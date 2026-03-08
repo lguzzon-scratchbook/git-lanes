@@ -3,9 +3,7 @@
   "version": "0.1.2",
   "description": "Parallel AI agent isolation for Git repositories",
   "type": "module",
-  "bin": {
-    "git-lanes": "./bin/git-lanes"
-  },
+  "bin": {"git-lanes": "./bin/git-lanes"},
   "scripts": {
     "dev": "bun run src/cli.ts",
     "build": "bun build src/cli.ts --outdir dist --target bun",
@@ -16,7 +14,9 @@
     "test:e2e": "bun test test/e2e",
     "test:stress": "bun test test/stress",
     "test:all": "bun test",
-    "lint": "bunx --bun tsc --noEmit"
+    "lint": "bun --bun x tsc --noEmit && bun lint:biome",
+    "lint:biome": "bun --bun x --yes @biomejs/biome@latest check --fix --unsafe  --indent-style=space --indent-width=2 --line-width=80 --expand=never --bracket-spacing=false --trailing-commas=none --semicolons=as-needed --arrow-parentheses=as-needed --bracket-same-line=true --javascript-formatter-expand=never --javascript-formatter-bracket-spacing=false --json-formatter-expand=never",
+    "update:package": "bun --bun x --yes npm-check-updates -u"
   },
   "keywords": [
     "git",
@@ -30,18 +30,8 @@
     "aider"
   ],
   "license": "MIT",
-  "engines": {
-    "bun": ">=1.0.0"
-  },
-  "files": [
-    "dist/",
-    "bin/",
-    "adapters/"
-  ],
-  "devDependencies": {
-    "bun-types": "^1.3.10"
-  },
-  "peerDependencies": {
-    "typescript": "^5.9.3"
-  }
+  "engines": {"bun": ">=1.0.0"},
+  "files": ["dist/", "bin/", "adapters/"],
+  "devDependencies": {"bun-types": "^1.3.10"},
+  "peerDependencies": {"typescript": "^5.9.3"}
 }

@@ -1,7 +1,7 @@
-import { spawnSync } from "bun";
-import { getDefaultBranch, getRepoRoot } from "../git.ts";
+import {spawnSync} from "bun"
+import {getDefaultBranch, getRepoRoot} from "../git.ts"
 
-export type ForgeType = "github" | "gitlab" | "bitbucket";
+export type ForgeType = "github" | "gitlab" | "bitbucket"
 
 /**
  * Create a pull request on the specified forge platform.
@@ -11,20 +11,20 @@ export function createPullRequest(
   title: string,
   body?: string,
   forge: ForgeType = "github",
-  cwd?: string,
+  cwd?: string
 ): string {
-  const repoRoot = getRepoRoot(cwd);
-  const defaultBranch = getDefaultBranch(repoRoot);
+  const repoRoot = getRepoRoot(cwd)
+  const defaultBranch = getDefaultBranch(repoRoot)
 
   switch (forge) {
     case "github":
-      return createGitHubPR(branch, defaultBranch, title, body, repoRoot);
+      return createGitHubPR(branch, defaultBranch, title, body, repoRoot)
     case "gitlab":
-      return createGitLabMR(branch, defaultBranch, title, body, repoRoot);
+      return createGitLabMR(branch, defaultBranch, title, body, repoRoot)
     case "bitbucket":
-      return createBitbucketPR(branch, defaultBranch, title, body, repoRoot);
+      return createBitbucketPR(branch, defaultBranch, title, body, repoRoot)
     default:
-      throw new Error(`Unsupported forge: ${forge}`);
+      throw new Error(`Unsupported forge: ${forge}`)
   }
 }
 
@@ -33,23 +33,34 @@ function createGitHubPR(
   baseBranch: string,
   title: string,
   body: string | undefined,
-  cwd: string,
+  cwd: string
 ): string {
-  const args = ["pr", "create", "--head", branch, "--base", baseBranch, "--title", title];
-  if (body) args.push("--body", body);
+  const args = [
+    "pr",
+    "create",
+    "--head",
+    branch,
+    "--base",
+    baseBranch,
+    "--title",
+    title
+  ]
+  if (body) args.push("--body", body)
 
   const result = spawnSync(["gh", ...args], {
     cwd,
     stdout: "pipe",
-    stderr: "pipe",
-  });
+    stderr: "pipe"
+  })
 
   if (result.exitCode !== 0) {
-    const stderr = result.stderr.toString();
-    throw new Error(`GitHub CLI failed: ${stderr}. Make sure 'gh' is installed and authenticated.`);
+    const stderr = result.stderr.toString()
+    throw new Error(
+      `GitHub CLI failed: ${stderr}. Make sure 'gh' is installed and authenticated.`
+    )
   }
 
-  return result.stdout.toString().trim();
+  return result.stdout.toString().trim()
 }
 
 function createGitLabMR(
@@ -57,28 +68,34 @@ function createGitLabMR(
   baseBranch: string,
   title: string,
   body: string | undefined,
-  cwd: string,
+  cwd: string
 ): string {
   const args = [
-    "mr", "create",
-    "--source-branch", branch,
-    "--target-branch", baseBranch,
-    "--title", title,
-  ];
-  if (body) args.push("--description", body);
+    "mr",
+    "create",
+    "--source-branch",
+    branch,
+    "--target-branch",
+    baseBranch,
+    "--title",
+    title
+  ]
+  if (body) args.push("--description", body)
 
   const result = spawnSync(["glab", ...args], {
     cwd,
     stdout: "pipe",
-    stderr: "pipe",
-  });
+    stderr: "pipe"
+  })
 
   if (result.exitCode !== 0) {
-    const stderr = result.stderr.toString();
-    throw new Error(`GitLab CLI failed: ${stderr}. Make sure 'glab' is installed and authenticated.`);
+    const stderr = result.stderr.toString()
+    throw new Error(
+      `GitLab CLI failed: ${stderr}. Make sure 'glab' is installed and authenticated.`
+    )
   }
 
-  return result.stdout.toString().trim();
+  return result.stdout.toString().trim()
 }
 
 function createBitbucketPR(
@@ -86,24 +103,30 @@ function createBitbucketPR(
   baseBranch: string,
   title: string,
   body: string | undefined,
-  cwd: string,
+  cwd: string
 ): string {
   // Try 'bb' CLI first
-  const args = ["bb", "pr", "create", "--source", branch, "--dest", baseBranch, "--title", title];
+  const args = [
+    "bb",
+    "pr",
+    "create",
+    "--source",
+    branch,
+    "--dest",
+    baseBranch,
+    "--title",
+    title
+  ]
   if (body) {
-    args.push("--body", body);
+    args.push("--body", body)
   }
-  const result = spawnSync(args, {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const result = spawnSync(args, {cwd, stdout: "pipe", stderr: "pipe"})
 
   if (result.exitCode !== 0) {
     throw new Error(
-      "Bitbucket PR creation failed. Install a Bitbucket CLI tool or create the PR manually.",
-    );
+      "Bitbucket PR creation failed. Install a Bitbucket CLI tool or create the PR manually."
+    )
   }
 
-  return result.stdout.toString().trim();
+  return result.stdout.toString().trim()
 }

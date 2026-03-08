@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * ARE Update Check Hook
  *
@@ -8,31 +9,35 @@
  * Cache file: ~/.claude/cache/are-update-check.json
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
-import { spawn, execSync } from 'child_process';
+import {spawn} from "node:child_process"
+import {existsSync, mkdirSync} from "node:fs"
+import {homedir} from "node:os"
+import {join} from "node:path"
 
-const homeDir = homedir();
-const cwd = process.cwd();
-const cacheDir = join(homeDir, '.claude', 'cache');
-const cacheFile = join(cacheDir, 'are-update-check.json');
-const npmCacheDir = join(cacheDir, 'npm-cache');
+const homeDir = homedir()
+const cwd = process.cwd()
+const cacheDir = join(homeDir, ".claude", "cache")
+const cacheFile = join(cacheDir, "are-update-check.json")
+const npmCacheDir = join(cacheDir, "npm-cache")
 
 // ARE-VERSION file locations (check project first, then global)
-const projectVersionFile = join(cwd, '.claude', 'ARE-VERSION');
-const globalVersionFile = join(homeDir, '.claude', 'ARE-VERSION');
+const projectVersionFile = join(cwd, ".claude", "ARE-VERSION")
+const globalVersionFile = join(homeDir, ".claude", "ARE-VERSION")
 
 // Ensure cache directory exists
 if (!existsSync(cacheDir)) {
-  mkdirSync(cacheDir, { recursive: true });
+  mkdirSync(cacheDir, {recursive: true})
 }
 if (!existsSync(npmCacheDir)) {
-  mkdirSync(npmCacheDir, { recursive: true });
+  mkdirSync(npmCacheDir, {recursive: true})
 }
 
 // Run check in background (spawn background process)
-const child = spawn(process.execPath, ['-e', `
+const child = spawn(
+  process.execPath,
+  [
+    "-e",
+    `
   const fs = require('fs');
   const { execSync } = require('child_process');
 
@@ -63,13 +68,9 @@ const child = spawn(process.execPath, ['-e', `
   };
 
   fs.writeFileSync(cacheFile, JSON.stringify(result));
-`], {
-  stdio: 'ignore',
-  detached: true,
-  windowsHide: true,
-  env: {
-    ...process.env,
-  },
-});
+`
+  ],
+  {stdio: "ignore", detached: true, windowsHide: true, env: {...process.env}}
+)
 
-child.unref();
+child.unref()
