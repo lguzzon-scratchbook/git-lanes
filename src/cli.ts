@@ -42,7 +42,10 @@ function parseArgs(argv: string[]): ParsedArgs {
   const flags: Record<string, string | boolean> = {}
 
   for (let i = 1; i < args.length; i++) {
-    const arg = args[i]!
+    const arg = args[i]
+    if (!arg) {
+      continue
+    }
 
     if (arg.startsWith("--")) {
       const eqIndex = arg.indexOf("=")

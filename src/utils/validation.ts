@@ -112,6 +112,10 @@ export function validateFilePaths(files: string[]): {
  * Sanitize a string for safe display (strip control characters).
  */
 export function sanitizeForDisplay(input: string): string {
-  // eslint-disable-next-line no-control-regex
-  return input.replace(/[\x00-\x1f\x7f]/g, "")
+  return Array.from(input)
+    .filter(char => {
+      const code = char.charCodeAt(0)
+      return code >= 0x20 && code !== 0x7f
+    })
+    .join("")
 }

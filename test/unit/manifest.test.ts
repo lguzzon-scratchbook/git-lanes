@@ -94,7 +94,7 @@ describe("manifest module", () => {
 
     addChangeset("test", changeset, repoPath)
 
-    const loaded = loadManifest("test", repoPath)!
+    const loaded = expectManifest(loadManifest("test", repoPath))
     expect(loaded.changesets.length).toBe(1)
     expect(loaded.changesets[0]?.sha).toBe("abc123")
   })
@@ -130,7 +130,7 @@ describe("manifest module", () => {
     expect(removed).not.toBeNull()
     expect(removed?.sha).toBe("def456")
 
-    const loaded = loadManifest("test", repoPath)!
+    const loaded = expectManifest(loadManifest("test", repoPath))
     expect(loaded.changesets.length).toBe(1)
     expect(loaded.pendingFiles).toContain("src/b.ts")
   })
@@ -141,7 +141,7 @@ describe("manifest module", () => {
     updatePendingFiles("test", ["a.ts", "b.ts"], repoPath)
     updatePendingFiles("test", ["b.ts", "c.ts"], repoPath)
 
-    const loaded = loadManifest("test", repoPath)!
+    const loaded = expectManifest(loadManifest("test", repoPath))
     expect(loaded.pendingFiles).toEqual(["a.ts", "b.ts", "c.ts"])
   })
 
@@ -175,3 +175,11 @@ describe("manifest module", () => {
     expect(files.sort()).toEqual(["a.ts", "b.ts", "c.ts", "d.ts"])
   })
 })
+
+function expectManifest<T>(value: T | null): T {
+  expect(value).not.toBeNull()
+  if (value === null) {
+    throw new Error("Expected manifest to be present")
+  }
+  return value
+}

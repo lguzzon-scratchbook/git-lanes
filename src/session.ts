@@ -83,7 +83,8 @@ export function resolveSession(
 
   // 3. If only one session exists, use it
   if (manifests.length === 1) {
-    return manifests[0]!
+    const [manifest] = manifests
+    return manifest ?? null
   }
 
   // 4. PPID-based client affinity

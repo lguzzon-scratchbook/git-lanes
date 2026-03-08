@@ -198,8 +198,10 @@ export function runCombinedTests(
  */
 function executeTest(command: string, cwd: string): TestResult {
   const parts = command.split(" ")
-  const cmd = parts[0]!
-  const args = parts.slice(1)
+  const [cmd, ...args] = parts
+  if (!cmd) {
+    return {success: false, command, exitCode: 1, output: "Empty test command"}
+  }
 
   const result = spawnSync([cmd, ...args], {
     cwd,
