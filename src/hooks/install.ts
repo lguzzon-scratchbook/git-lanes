@@ -8,6 +8,7 @@ interface AdapterConfig {
   files: Record<string, string>;
   configFile?: string;
   configContent?: string;
+  mergeConfig?: (existing: Record<string, unknown>, source: Record<string, unknown>) => Record<string, unknown>;
 }
 
 const ADAPTERS: Record<string, () => AdapterConfig> = {
@@ -50,7 +51,9 @@ export function installHooks(adapter = "claude-code", cwd?: string): void {
       try {
         const existing = JSON.parse(readFileSync(configPath, "utf-8"));
         const newConfig = JSON.parse(config.configContent);
-        const merged = deepMerge(existing, newConfig);
+        const merged = config.mergeConfig
+          ? config.mergeConfig(existing, newConfig)
+          : deepMerge(existing, newConfig);
         writeFileSync(configPath, JSON.stringify(merged, null, 2));
       } catch {
         writeFileSync(configPath, config.configContent);
@@ -160,11 +163,12 @@ exit 0
 `,
     },
     configFile: ".claude/settings.json",
+    mergeConfig: mergeClaudeCodeConfig,
     configContent: JSON.stringify({
       hooks: {
-        PreToolUse: [{ command: ".claude/hooks/git-lanes-pre-tool" }],
-        PostToolUse: [{ command: ".claude/hooks/git-lanes-post-tool" }],
-        Stop: [{ command: ".claude/hooks/git-lanes-stop" }],
+        PreToolUse: [createClaudeCommandHookEntry(".claude/hooks/git-lanes-pre-tool")],
+        PostToolUse: [createClaudeCommandHookEntry(".claude/hooks/git-lanes-post-tool")],
+        Stop: [createClaudeCommandHookEntry(".claude/hooks/git-lanes-stop")],
       },
     }, null, 2),
   };
@@ -258,4 +262,119 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
   }
 
   return result;
+}
+
+function createClaudeCommandHookEntry(command: string): Record<string, unknown> {
+  return {
+    hooks: [
+      {
+        type: "command",
+        command,
+      },
+    ],
+  };
+}
+
+function mergeClaudeCodeConfig(
+  existing: Record<string, unknown>,
+  source: Record<string, unknown>,
+): Record<string, unknown> {
+  const sourceWithoutHooks = { ...source };
+  delete sourceWithoutHooks.hooks;
+
+  const merged = deepMerge(existing, sourceWithoutHooks);
+  const existingHooks = asRecord(existing.hooks);
+  const sourceHooks = asRecord(source.hooks);
+  const mergedHooks: Record<string, unknown> = { ...existingHooks };
+
+  for (const [eventName, sourceEntries] of Object.entries(sourceHooks)) {
+    const desiredEntries = Array.isArray(sourceEntries) ? sourceEntries : [];
+    const managedCommands = new Set(getHookCommands(desiredEntries));
+    const currentEntries = Array.isArray(existingHooks[eventName]) ? existingHooks[eventName] : [];
+
+    const sanitizedEntries = currentEntries
+      .map((entry) => removeManagedCommandsFromHookEntry(entry, managedCommands))
+      .filter((entry): entry is unknown => entry !== null);
+
+    mergedHooks[eventName] = [...sanitizedEntries, ...desiredEntries];
+  }
+
+  return {
+    ...merged,
+    hooks: mergedHooks,
+  };
+}
+
+function removeManagedCommandsFromHookEntry(
+  entry: unknown,
+  managedCommands: Set<string>,
+): unknown | null {
+  if (!isRecord(entry)) {
+    return entry;
+  }
+
+  if (typeof entry.command === "string" && managedCommands.has(entry.command)) {
+    return null;
+  }
+
+  if (!Array.isArray(entry.hooks)) {
+    return entry;
+  }
+
+  let removed = false;
+  const remainingHooks = entry.hooks.filter((hook) => {
+    if (isRecord(hook) && typeof hook.command === "string" && managedCommands.has(hook.command)) {
+      removed = true;
+      return false;
+    }
+
+    return true;
+  });
+
+  if (!removed) {
+    return entry;
+  }
+
+  if (remainingHooks.length === 0) {
+    return null;
+  }
+
+  return {
+    ...entry,
+    hooks: remainingHooks,
+  };
+}
+
+function getHookCommands(entries: unknown[]): string[] {
+  const commands = new Set<string>();
+
+  for (const entry of entries) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+
+    if (typeof entry.command === "string") {
+      commands.add(entry.command);
+    }
+
+    if (!Array.isArray(entry.hooks)) {
+      continue;
+    }
+
+    for (const hook of entry.hooks) {
+      if (isRecord(hook) && typeof hook.command === "string") {
+        commands.add(hook.command);
+      }
+    }
+  }
+
+  return [...commands];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
