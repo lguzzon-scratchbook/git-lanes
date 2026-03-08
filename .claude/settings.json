@@ -2,18 +2,65 @@
   "hooks": {
     "PreToolUse": [
       {
-        "command": ".claude/hooks/git-lanes-pre-tool"
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/git-lanes-pre-tool"
+          }
+        ]
       }
     ],
     "Stop": [
       {
-        "command": ".claude/hooks/git-lanes-stop"
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/git-lanes-stop"
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
-        "command": ".claude/hooks/git-lanes-post-tool"
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/git-lanes-post-tool"
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/are-context-loader.js"
+          }
+        ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/are-check-update.js"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npx agents-reverse-engineer init*)",
+      "Bash(npx agents-reverse-engineer discover*)",
+      "Bash(npx agents-reverse-engineer generate*)",
+      "Bash(npx agents-reverse-engineer update*)",
+      "Bash(npx agents-reverse-engineer specify*)",
+      "Bash(npx agents-reverse-engineer rebuild*)",
+      "Bash(npx agents-reverse-engineer clean*)",
+      "Bash(npx agents-reverse-engineer dashboard*)",
+      "Bash(sleep *)"
     ]
   }
 }
